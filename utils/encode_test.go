@@ -4,8 +4,9 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/KyberNetwork/pancake-v3-sdk/constants"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/KyberNetwork/pancake-v3-sdk/constants"
 )
 
 func TestEncodeSqrtRatioX96(t *testing.T) {

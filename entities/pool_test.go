@@ -4,11 +4,12 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/KyberNetwork/pancake-v3-sdk/constants"
-	"github.com/KyberNetwork/pancake-v3-sdk/utils"
 	"github.com/daoleno/uniswap-sdk-core/entities"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/KyberNetwork/pancake-v3-sdk/constants"
+	"github.com/KyberNetwork/pancake-v3-sdk/utils"
 )
 
 var (

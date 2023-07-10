@@ -4,8 +4,9 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/KyberNetwork/pancake-v3-sdk/constants"
 	"github.com/daoleno/uniswap-sdk-core/entities"
+
+	"github.com/KyberNetwork/pancake-v3-sdk/constants"
 )
 
 var (

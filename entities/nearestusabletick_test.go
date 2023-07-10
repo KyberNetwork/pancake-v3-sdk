@@ -3,8 +3,9 @@ package entities
 import (
 	"testing"
 
-	"github.com/KyberNetwork/pancake-v3-sdk/utils"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/KyberNetwork/pancake-v3-sdk/utils"
 )
 
 func TestNearestUsableTick(t *testing.T) {
