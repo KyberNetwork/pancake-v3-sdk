@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	ErrFeeTooHigh               = errors.New("Fee too high")
-	ErrInvalidSqrtRatioX96      = errors.New("Invalid sqrtRatioX96")
-	ErrTokenNotInvolved         = errors.New("Token not involved in pool")
+	ErrFeeTooHigh               = errors.New("fee too high")
+	ErrInvalidSqrtRatioX96      = errors.New("invalid sqrtRatioX96")
+	ErrTokenNotInvolved         = errors.New("token not involved in pool")
 	ErrSqrtPriceLimitX96TooLow  = errors.New("SqrtPriceLimitX96 too low")
 	ErrSqrtPriceLimitX96TooHigh = errors.New("SqrtPriceLimitX96 too high")
 )
@@ -41,6 +41,29 @@ type Pool struct {
 
 	token0Price *entities.Price
 	token1Price *entities.Price
+}
+
+type SwapResult struct {
+	amountCalculated      *big.Int
+	sqrtRatioX96          *big.Int
+	liquidity             *big.Int
+	remainingTargetAmount *big.Int
+	currentTick           int
+	crossInitTickLoops    int
+}
+
+type GetOutputAmountResult struct {
+	ReturnedAmount     *entities.CurrencyAmount
+	RemainingAmountIn  *entities.CurrencyAmount
+	NewPoolState       *Pool
+	CrossInitTickLoops int
+}
+
+type GetInputAmountResult struct {
+	ReturnedAmount     *entities.CurrencyAmount
+	RemainingAmountOut *entities.CurrencyAmount
+	NewPoolState       *Pool
+	CrossInitTickLoops int
 }
 
 func GetAddress(tokenA, tokenB *entities.Token, fee constants.FeeAmount, initCodeHashManualOverride string) (common.Address, error) {
@@ -149,14 +172,14 @@ func (p *Pool) ChainID() uint {
  * @param sqrtPriceLimitX96 The Q64.96 sqrt price limit
  * @returns The output amount and the pool with updated state
  */
-func (p *Pool) GetOutputAmount(inputAmount *entities.CurrencyAmount, sqrtPriceLimitX96 *big.Int) (*entities.CurrencyAmount, *Pool, error) {
+func (p *Pool) GetOutputAmount(inputAmount *entities.CurrencyAmount, sqrtPriceLimitX96 *big.Int) (*GetOutputAmountResult, error) {
 	if !(inputAmount.Currency.IsToken() && p.InvolvesToken(inputAmount.Currency.Wrapped())) {
-		return nil, nil, ErrTokenNotInvolved
+		return nil, ErrTokenNotInvolved
 	}
 	zeroForOne := inputAmount.Currency.Equal(p.Token0)
-	outputAmount, sqrtRatioX96, liquidity, tickCurrent, err := p.swap(zeroForOne, inputAmount.Quotient(), sqrtPriceLimitX96)
+	swapResult, err := p.swap(zeroForOne, inputAmount.Quotient(), sqrtPriceLimitX96)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var outputToken *entities.Token
 	if zeroForOne {
@@ -164,11 +187,25 @@ func (p *Pool) GetOutputAmount(inputAmount *entities.CurrencyAmount, sqrtPriceLi
 	} else {
 		outputToken = p.Token0
 	}
-	pool, err := NewPool(p.Token0, p.Token1, p.Fee, sqrtRatioX96, liquidity, tickCurrent, p.TickDataProvider)
+	pool, err := NewPool(
+		p.Token0,
+		p.Token1,
+		p.Fee,
+		swapResult.sqrtRatioX96,
+		swapResult.liquidity,
+		swapResult.currentTick,
+		p.TickDataProvider,
+	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return entities.FromRawAmount(outputToken, new(big.Int).Mul(outputAmount, constants.NegativeOne)), pool, nil
+
+	return &GetOutputAmountResult{
+		ReturnedAmount:     entities.FromRawAmount(outputToken, new(big.Int).Mul(swapResult.amountCalculated, constants.NegativeOne)),
+		RemainingAmountIn:  entities.FromRawAmount(inputAmount.Currency, swapResult.remainingTargetAmount),
+		NewPoolState:       pool,
+		CrossInitTickLoops: swapResult.crossInitTickLoops,
+	}, nil
 }
 
 /**
@@ -177,14 +214,14 @@ func (p *Pool) GetOutputAmount(inputAmount *entities.CurrencyAmount, sqrtPriceLi
  * @param sqrtPriceLimitX96 The Q64.96 sqrt price limit. If zero for one, the price cannot be less than this value after the swap. If one for zero, the price cannot be greater than this value after the swap
  * @returns The input amount and the pool with updated state
  */
-func (p *Pool) GetInputAmount(outputAmount *entities.CurrencyAmount, sqrtPriceLimitX96 *big.Int) (*entities.CurrencyAmount, *Pool, error) {
+func (p *Pool) GetInputAmount(outputAmount *entities.CurrencyAmount, sqrtPriceLimitX96 *big.Int) (*GetInputAmountResult, error) {
 	if !(outputAmount.Currency.IsToken() && p.InvolvesToken(outputAmount.Currency.Wrapped())) {
-		return nil, nil, ErrTokenNotInvolved
+		return nil, ErrTokenNotInvolved
 	}
 	zeroForOne := outputAmount.Currency.Equal(p.Token1)
-	inputAmount, sqrtRatioX96, liquidity, tickCurrent, err := p.swap(zeroForOne, new(big.Int).Mul(outputAmount.Quotient(), constants.NegativeOne), sqrtPriceLimitX96)
+	swapResult, err := p.swap(zeroForOne, new(big.Int).Mul(outputAmount.Quotient(), constants.NegativeOne), sqrtPriceLimitX96)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var inputToken *entities.Token
 	if zeroForOne {
@@ -192,11 +229,25 @@ func (p *Pool) GetInputAmount(outputAmount *entities.CurrencyAmount, sqrtPriceLi
 	} else {
 		inputToken = p.Token1
 	}
-	pool, err := NewPool(p.Token0, p.Token1, p.Fee, sqrtRatioX96, liquidity, tickCurrent, p.TickDataProvider)
+	pool, err := NewPool(
+		p.Token0,
+		p.Token1,
+		p.Fee,
+		swapResult.sqrtRatioX96,
+		swapResult.liquidity,
+		swapResult.currentTick,
+		p.TickDataProvider,
+	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return entities.FromRawAmount(inputToken, inputAmount), pool, nil
+
+	return &GetInputAmountResult{
+		ReturnedAmount:     entities.FromRawAmount(inputToken, swapResult.amountCalculated),
+		RemainingAmountOut: entities.FromRawAmount(outputAmount.Currency, swapResult.remainingTargetAmount),
+		NewPoolState:       pool,
+		CrossInitTickLoops: swapResult.crossInitTickLoops,
+	}, nil
 }
 
 /**
@@ -204,12 +255,14 @@ func (p *Pool) GetInputAmount(outputAmount *entities.CurrencyAmount, sqrtPriceLi
  * @param zeroForOne Whether the amount in is token0 or token1
  * @param amountSpecified The amount of the swap, which implicitly configures the swap as exact input (positive), or exact output (negative)
  * @param sqrtPriceLimitX96 The Q64.96 sqrt price limit. If zero for one, the price cannot be less than this value after the swap. If one for zero, the price cannot be greater than this value after the swap
- * @returns amountCalculated
- * @returns sqrtRatioX96
- * @returns liquidity
- * @returns tickCurrent
+ * @returns swapResult.amountCalculated
+ * @returns swapResult.sqrtRatioX96
+ * @returns swapResult.liquidity
+ * @returns swapResult.tickCurrent
  */
-func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int) (amountCalCulated *big.Int, sqrtRatioX96 *big.Int, liquidity *big.Int, tickCurrent int, err error) {
+func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int) (*SwapResult, error) {
+	var err error
+
 	if sqrtPriceLimitX96 == nil {
 		if zeroForOne {
 			sqrtPriceLimitX96 = new(big.Int).Add(utils.MinSqrtRatio, constants.One)
@@ -220,17 +273,17 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 
 	if zeroForOne {
 		if sqrtPriceLimitX96.Cmp(utils.MinSqrtRatio) < 0 {
-			return nil, nil, nil, 0, ErrSqrtPriceLimitX96TooLow
+			return nil, ErrSqrtPriceLimitX96TooLow
 		}
 		if sqrtPriceLimitX96.Cmp(p.SqrtRatioX96) >= 0 {
-			return nil, nil, nil, 0, ErrSqrtPriceLimitX96TooHigh
+			return nil, ErrSqrtPriceLimitX96TooHigh
 		}
 	} else {
 		if sqrtPriceLimitX96.Cmp(utils.MaxSqrtRatio) > 0 {
-			return nil, nil, nil, 0, ErrSqrtPriceLimitX96TooHigh
+			return nil, ErrSqrtPriceLimitX96TooHigh
 		}
 		if sqrtPriceLimitX96.Cmp(p.SqrtRatioX96) <= 0 {
-			return nil, nil, nil, 0, ErrSqrtPriceLimitX96TooLow
+			return nil, ErrSqrtPriceLimitX96TooLow
 		}
 	}
 
@@ -252,6 +305,10 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 		liquidity:                p.Liquidity,
 	}
 
+	// crossInitTickLoops is the number of loops that cross an initialized tick.
+	// We only count when tick passes an initialized tick, since gas only significant in this case.
+	crossInitTickLoops := 0
+
 	// start swap while loop
 	for state.amountSpecifiedRemaining.Cmp(constants.Zero) != 0 && state.sqrtPriceX96.Cmp(sqrtPriceLimitX96) != 0 {
 		var step StepComputations
@@ -262,7 +319,7 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 		// tickBitmap.nextInitializedTickWithinOneWord
 		step.tickNext, step.initialized, err = p.TickDataProvider.NextInitializedTickIndex(state.tick, zeroForOne)
 		if err != nil {
-			return nil, nil, nil, 0, err
+			return nil, err
 		}
 
 		if step.tickNext < utils.MinTick {
@@ -273,7 +330,7 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 
 		step.sqrtPriceNextX96, err = utils.GetSqrtRatioAtTick(step.tickNext)
 		if err != nil {
-			return nil, nil, nil, 0, err
+			return nil, err
 		}
 		var targetValue *big.Int
 		if zeroForOne {
@@ -292,7 +349,7 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 
 		state.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount, err = utils.ComputeSwapStep(state.sqrtPriceX96, targetValue, state.liquidity, state.amountSpecifiedRemaining, p.Fee)
 		if err != nil {
-			return nil, nil, nil, 0, err
+			return nil, err
 		}
 
 		if exactInput {
@@ -309,7 +366,7 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 			if step.initialized {
 				tick, err := p.TickDataProvider.GetTick(step.tickNext)
 				if err != nil {
-					return nil, nil, nil, 0, err
+					return nil, err
 				}
 
 				liquidityNet := tick.LiquidityNet
@@ -319,6 +376,8 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 					liquidityNet = new(big.Int).Mul(liquidityNet, constants.NegativeOne)
 				}
 				state.liquidity = utils.AddDelta(state.liquidity, liquidityNet)
+
+				crossInitTickLoops++
 			}
 			if zeroForOne {
 				state.tick = step.tickNext - 1
@@ -329,11 +388,19 @@ func (p *Pool) swap(zeroForOne bool, amountSpecified, sqrtPriceLimitX96 *big.Int
 			// recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
 			state.tick, err = utils.GetTickAtSqrtRatio(state.sqrtPriceX96)
 			if err != nil {
-				return nil, nil, nil, 0, err
+				return nil, err
 			}
 		}
 	}
-	return state.amountCalculated, state.sqrtPriceX96, state.liquidity, state.tick, nil
+
+	return &SwapResult{
+		amountCalculated:      state.amountCalculated,
+		sqrtRatioX96:          state.sqrtPriceX96,
+		liquidity:             state.liquidity,
+		currentTick:           state.tick,
+		remainingTargetAmount: state.amountSpecifiedRemaining,
+		crossInitTickLoops:    crossInitTickLoops,
+	}, nil
 }
 
 func (p *Pool) tickSpacing() int {
