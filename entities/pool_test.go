@@ -1,12 +1,14 @@
 package entities
 
 import (
+	"bytes"
 	"math/big"
 	"testing"
 
 	"github.com/daoleno/uniswap-sdk-core/entities"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/tinylib/msgp/msgp"
 
 	"github.com/KyberNetwork/pancake-v3-sdk/constants"
 	"github.com/KyberNetwork/pancake-v3-sdk/utils"
@@ -185,4 +187,24 @@ func TestGetInputAmount(t *testing.T) {
 	assert.True(t, getInputAmountResult.ReturnedAmount.Currency.Equal(DAI))
 	assert.Equal(t, getInputAmountResult.ReturnedAmount.Quotient(), big.NewInt(100))
 	assert.Equal(t, getInputAmountResult.RemainingAmountOut.Quotient(), big.NewInt(0))
+}
+
+func TestPoolMsgpEndecode(t *testing.T) {
+	poolWithNilProvider := newTestPool()
+	poolWithNilProvider.TickDataProvider = nil
+	pools := []*Pool{
+		newTestPool(),
+		poolWithNilProvider,
+	}
+	for _, pool := range pools {
+		encoded := new(bytes.Buffer)
+		err := msgp.Encode(encoded, pool)
+		assert.NoError(t, err)
+
+		decoded := new(Pool)
+		err = msgp.Decode(encoded, decoded)
+		assert.NoError(t, err)
+
+		assert.EqualValues(t, pool, decoded)
+	}
 }
