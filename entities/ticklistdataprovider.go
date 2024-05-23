@@ -1,4 +1,11 @@
+//go:generate go run github.com/tinylib/msgp -unexported -tests=false -v
+//msgp:tuple TickListDataProvider
+
 package entities
+
+func init() {
+	RegisterTickDataProviderImpl(&TickListDataProvider{})
+}
 
 // A data provider for ticks that is backed by an in-memory array of ticks.
 type TickListDataProvider struct {
